@@ -503,6 +503,21 @@ class EInvoiceGenerator:
 		li.settlement.monetary_summation.total_amount = flt(item.net_amount, item.precision("net_amount"))
 		self.doc.trade.items.add(li)
 
+	def _get_actual_charge_vat_row(self, charge_index: int):
+		"""Find VAT on this charge or on the running total of its consecutive charge block."""
+		for vat_index in range(charge_index + 1, len(self.invoice.taxes)):
+			vat_row = self.invoice.taxes[vat_index]
+			if vat_row.charge_type == "Actual":
+				continue
+			reference_index = cint(vat_row.get("row_id") or vat_index) - 1
+			if (vat_row.charge_type == "On Previous Row Amount" and reference_index == charge_index) or (
+				vat_row.charge_type == "On Previous Row Total" and charge_index <= reference_index < vat_index
+			):
+				return vat_row
+			# Do not carry a VAT mapping across an unrelated tax row.
+			break
+		return None
+
 	def _add_taxes_and_charges(self):
 		tax_added = False
 		for i, tax in enumerate(self.invoice.taxes):
@@ -518,11 +533,8 @@ class EInvoiceGenerator:
 				charge.actual_amount = flt(tax.tax_amount, 2)
 				charge_tax = CategoryTradeTax()
 				charge_tax.type_code = "VAT"
-				vat_line = self.invoice.taxes[i + 1] if len(self.invoice.taxes) > i + 1 else None
-				if vat_line and (
-					vat_line.charge_type in ("On Previous Row Amount", "On Previous Row Total")
-					and cint(vat_line.get("row_id") or i + 1) == i + 1
-				):
+				vat_line = self._get_actual_charge_vat_row(i)
+				if vat_line:
 					lookup[0] = ("Account", vat_line.account_head)
 					rate = vat_line.rate
 				else:
@@ -531,7 +543,7 @@ class EInvoiceGenerator:
 				if charge_tax.category_code._text == "S" and not rate:
 					frappe.throw(
 						_(
-							"An Actual charge with standard VAT requires a following VAT row referencing the charge."
+							"An Actual charge with standard VAT requires a following VAT row covering the charge."
 						)
 					)
 				if charge_tax.category_code._text != "O":
@@ -1020,6 +1032,8 @@ def get_item_rate(item_tax_template: str | None, taxes: list) -> float | None:
 	   apply to this line, so the rate is 0.
 	3) If no template row matched at all: if there is exactly one *On Net Total* row, use its
 	   ``rate``.
+	4) For consecutive *Actual* charges followed by one *On Previous Row Total* row covering
+	   the entire invoice, use that VAT row's ``rate`` for the invoice lines as well.
 	"""
 	if item_tax_template:
 		tax_template = frappe.get_cached_doc("Item Tax Template", item_tax_template)
@@ -1045,7 +1059,16 @@ def get_item_rate(item_tax_template: str | None, taxes: list) -> float | None:
 			return 0.0
 
 	tax_rates = [invoice_tax.rate for invoice_tax in taxes if invoice_tax.charge_type == "On Net Total"]
-	return tax_rates[0] if len(tax_rates) == 1 else None
+	if len(tax_rates) == 1:
+		return tax_rates[0]
+	if (
+		len(taxes) > 1
+		and all(tax.charge_type == "Actual" for tax in taxes[:-1])
+		and taxes[-1].charge_type == "On Previous Row Total"
+		and cint(taxes[-1].get("row_id") or len(taxes) - 1) == len(taxes) - 1
+	):
+		return taxes[-1].rate
+	return None
 
 
 def get_skonto_line(days: int, percent: float, basis_amount: float | None = None):

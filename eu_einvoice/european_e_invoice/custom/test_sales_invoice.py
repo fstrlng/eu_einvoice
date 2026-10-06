@@ -105,6 +105,28 @@ class TestGetItemRate(FrappeTestCase):
 
 
 class TestActualCharges(FrappeTestCase):
+	def _four_charge_generator(self, profile=EInvoiceProfile.EN16931):
+		generator = self._generator(profile)
+		generator.invoice.taxes = []
+		total = generator.invoice.net_total
+		for description, amount in (("Packaging", 10), ("Freight", 20), ("Insurance", 5), ("Customs", 15)):
+			total += amount
+			generator.invoice.taxes.append(
+				frappe._dict(
+					account_head=description,
+					charge_type="Actual",
+					description=description,
+					tax_amount=amount,
+					total=total,
+				)
+			)
+		generator.invoice.taxes.append(
+			frappe._dict(
+				account_head="VAT", charge_type="On Previous Row Total", row_id="4", rate=19, tax_amount=28.5
+			)
+		)
+		return generator
+
 	def _generator(self, profile=EInvoiceProfile.EN16931, rate=19, charge_type="On Previous Row Amount"):
 		invoice = frappe._dict(
 			net_total=100,
@@ -172,7 +194,9 @@ class TestActualCharges(FrappeTestCase):
 		self.assertEqual(charge_tax.category_code._text, "S")
 
 	def test_complete_en16931_invoice_validates(self):
-		generator = self._generator()
+		self._validate_complete_invoice(self._generator())
+
+	def _validate_complete_invoice(self, generator):
 		doc = generator.doc
 		doc.context.guideline_parameter.id = get_guideline(generator.profile)
 		doc.header.id = "ACTUAL-CHARGE-TEST"
@@ -191,7 +215,7 @@ class TestActualCharges(FrappeTestCase):
 		line.delivery.billed_quantity = (1, "C62")
 		line.settlement.trade_tax.type_code = "VAT"
 		line.settlement.trade_tax.category_code = "S"
-		line.settlement.trade_tax.rate_applicable_percent = 19
+		line.settlement.trade_tax.rate_applicable_percent = get_item_rate(None, generator.invoice.taxes)
 		line.settlement.monetary_summation.total_amount = 100
 		doc.trade.items.add(line)
 		doc.trade.settlement.currency_code = "EUR"
@@ -205,6 +229,66 @@ class TestActualCharges(FrappeTestCase):
 		xml = doc.serialize(schema=get_drafthorse_schema(generator.profile))
 		errors, _warnings = get_validation_errors(xml.decode(), generator.profile)
 		self.assertEqual(errors, [])
+
+	def test_four_actual_charges_share_final_total_vat(self):
+		for profile in (EInvoiceProfile.EN16931, EInvoiceProfile.XRECHNUNG, EInvoiceProfile.EXTENDED):
+			with self.subTest(profile=profile):
+				generator = self._four_charge_generator(profile)
+				with patch.object(
+					duty_tax_fee_category_codes,
+					"get",
+					side_effect=lambda lookup: "S" if lookup[0] == ("Account", "VAT") else "E",
+				):
+					self.assertTrue(generator._add_taxes_and_charges())
+				charges = generator.doc.trade.settlement.allowance_charge.children
+				self.assertEqual(
+					[charge.reason._text for charge in charges],
+					["Packaging", "Freight", "Insurance", "Customs"],
+				)
+				self.assertEqual([charge.actual_amount._value for charge in charges], [10, 20, 5, 15])
+				for charge in charges:
+					self.assertEqual(charge.trade_tax.children[0].category_code._text, "S")
+					self.assertEqual(charge.trade_tax.children[0].rate_applicable_percent._value, 19)
+				taxes = generator.doc.trade.settlement.trade_tax.children
+				self.assertEqual(len(taxes), 1)
+				self.assertEqual(taxes[0].basis_amount._value, 150)
+				self.assertEqual(taxes[0].calculated_amount._value, 28.5)
+				self.assertEqual(generator.doc.trade.settlement.service_charge.children, [])
+
+	def test_complete_four_charge_en16931_invoice_validates(self):
+		self._validate_complete_invoice(self._four_charge_generator())
+
+	def test_four_charge_total_vat_defaults_to_last_row(self):
+		generator = self._four_charge_generator()
+		generator.invoice.taxes[-1].row_id = None
+		self.assertEqual(get_item_rate(None, generator.invoice.taxes), 19)
+		self._validate_complete_invoice(generator)
+
+	def test_final_amount_vat_does_not_cover_earlier_charges(self):
+		generator = self._four_charge_generator()
+		generator.invoice.taxes[-1].charge_type = "On Previous Row Amount"
+		self.assertIsNone(get_item_rate(None, generator.invoice.taxes))
+		with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+			with self.assertRaises(frappe.ValidationError):
+				generator._add_taxes_and_charges()
+
+	def test_total_vat_reference_excludes_later_charges(self):
+		generator = self._four_charge_generator()
+		generator.invoice.taxes[-1].row_id = "2"
+		self.assertIs(generator._get_actual_charge_vat_row(0), generator.invoice.taxes[-1])
+		self.assertIs(generator._get_actual_charge_vat_row(1), generator.invoice.taxes[-1])
+		self.assertIsNone(generator._get_actual_charge_vat_row(2))
+		self.assertIsNone(generator._get_actual_charge_vat_row(3))
+		self.assertIsNone(get_item_rate(None, generator.invoice.taxes))
+
+	def test_total_vat_mapping_stops_at_intervening_tax(self):
+		generator = self._four_charge_generator()
+		generator.invoice.taxes.insert(
+			2, frappe._dict(charge_type="On Net Total", rate=7, account_head="Other VAT")
+		)
+		generator.invoice.taxes[-1].row_id = "5"
+		self.assertIsNone(generator._get_actual_charge_vat_row(0))
+		self.assertIs(generator._get_actual_charge_vat_row(3), generator.invoice.taxes[-1])
 
 	def test_different_vat_rates_remain_separate(self):
 		generator = self._generator()
