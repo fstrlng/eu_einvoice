@@ -1,9 +1,13 @@
 import re
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 from xml.etree import ElementTree as ET
 
 import frappe
 from drafthorse.models.document import Document
+from drafthorse.models.party import TaxRegistration
+from drafthorse.models.payment import PaymentTerms
+from drafthorse.models.tradelines import LineItem
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
 from frappe.tests.utils import FrappeTestCase
 
@@ -16,7 +20,7 @@ from eu_einvoice.european_e_invoice.custom.sales_invoice import (
 	vat_exemption_reason_codes,
 )
 from eu_einvoice.schematron import get_validation_errors
-from eu_einvoice.utils import EInvoiceProfile
+from eu_einvoice.utils import EInvoiceProfile, get_drafthorse_schema, get_guideline
 
 NAMESPACES = {"ram": "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"}
 # Schematron rules about VAT categories, rates and exemption reasons
@@ -98,6 +102,158 @@ class TestGetItemRate(FrappeTestCase):
 			patch("frappe.get_meta", return_value=meta),
 		):
 			self.assertEqual(get_item_rate("5 %", taxes), 19)
+
+
+class TestActualCharges(FrappeTestCase):
+	def _generator(self, profile=EInvoiceProfile.EN16931, rate=19, charge_type="On Previous Row Amount"):
+		invoice = frappe._dict(
+			net_total=100,
+			tax_category=None,
+			taxes_and_charges=None,
+			precision=lambda fieldname: 2,
+			taxes=[
+				frappe._dict(
+					account_head="VAT", charge_type="On Net Total", rate=rate, tax_amount=rate, net_amount=100
+				),
+				frappe._dict(
+					account_head="Freight",
+					charge_type="Actual",
+					description="Freight",
+					tax_amount=50,
+					total=150,
+				),
+				frappe._dict(
+					account_head="VAT", charge_type=charge_type, row_id="2", rate=rate, tax_amount=rate / 2
+				),
+			],
+		)
+		generator = EInvoiceGenerator(profile, invoice, None, None)
+		generator.doc = Document()
+		generator.item_tax_rates = {rate}
+		return generator
+
+	def test_actual_charge_xml_and_grouped_vat(self):
+		for profile in (EInvoiceProfile.EN16931, EInvoiceProfile.XRECHNUNG, EInvoiceProfile.EXTENDED):
+			with self.subTest(profile=profile):
+				generator = self._generator(profile)
+				with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+					self.assertTrue(generator._add_taxes_and_charges())
+				root = generator.doc.trade.settlement.to_etree()
+				self.assertIsNone(root.find("ram:SpecifiedLogisticsServiceCharge", NAMESPACES))
+				charge = root.find("ram:SpecifiedTradeAllowanceCharge", NAMESPACES)
+				self.assertEqual(charge.findtext("ram:ChargeIndicator/*", namespaces=NAMESPACES), "true")
+				self.assertEqual(float(charge.findtext("ram:ActualAmount", namespaces=NAMESPACES)), 50)
+				self.assertEqual(charge.findtext("ram:Reason", namespaces=NAMESPACES), "Freight")
+				self.assertEqual(
+					charge.findtext("ram:CategoryTradeTax/ram:CategoryCode", namespaces=NAMESPACES), "S"
+				)
+				self.assertEqual(
+					float(
+						charge.findtext(
+							"ram:CategoryTradeTax/ram:RateApplicablePercent", namespaces=NAMESPACES
+						)
+					),
+					19,
+				)
+				taxes = generator.doc.trade.settlement.trade_tax.children
+				self.assertEqual(len(taxes), 1)
+				self.assertEqual(taxes[0].basis_amount._value, 150)
+				self.assertEqual(taxes[0].calculated_amount._value, 28.5)
+
+	def test_charge_vat_uses_vat_account_mapping(self):
+		generator = self._generator()
+		with patch.object(
+			duty_tax_fee_category_codes,
+			"get",
+			side_effect=lambda lookup: "S" if lookup[0] == ("Account", "VAT") else "E",
+		):
+			generator._add_taxes_and_charges()
+		charge_tax = generator.doc.trade.settlement.allowance_charge.children[0].trade_tax.children[0]
+		self.assertEqual(charge_tax.category_code._text, "S")
+
+	def test_complete_en16931_invoice_validates(self):
+		generator = self._generator()
+		doc = generator.doc
+		doc.context.guideline_parameter.id = get_guideline(generator.profile)
+		doc.header.id = "ACTUAL-CHARGE-TEST"
+		doc.header.type_code = "380"
+		doc.header.issue_date_time = datetime(2026, 10, 6)
+		for party, name in ((doc.trade.agreement.seller, "Seller"), (doc.trade.agreement.buyer, "Buyer")):
+			party.name = name
+			party.address.country_id = "DE"
+		registration = TaxRegistration()
+		registration.id = ("VA", "DE123456789")
+		doc.trade.agreement.seller.tax_registrations.add(registration)
+		line = LineItem()
+		line.document.line_id = "1"
+		line.product.name = "Product"
+		line.agreement.net.amount = 100
+		line.delivery.billed_quantity = (1, "C62")
+		line.settlement.trade_tax.type_code = "VAT"
+		line.settlement.trade_tax.category_code = "S"
+		line.settlement.trade_tax.rate_applicable_percent = 19
+		line.settlement.monetary_summation.total_amount = 100
+		doc.trade.items.add(line)
+		doc.trade.settlement.currency_code = "EUR"
+		generator.invoice.update(currency="EUR", grand_total=178.5, outstanding_amount=178.5, total_advance=0)
+		with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+			generator._add_taxes_and_charges()
+		generator._set_totals()
+		terms = PaymentTerms()
+		terms.due = datetime(2026, 11, 6)
+		doc.trade.settlement.terms.add(terms)
+		xml = doc.serialize(schema=get_drafthorse_schema(generator.profile))
+		errors, _warnings = get_validation_errors(xml.decode(), generator.profile)
+		self.assertEqual(errors, [])
+
+	def test_different_vat_rates_remain_separate(self):
+		generator = self._generator()
+		generator.invoice.taxes[2].rate = 7
+		generator.invoice.taxes[2].tax_amount = 3.5
+		with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+			generator._add_taxes_and_charges()
+		taxes = generator.doc.trade.settlement.trade_tax.children
+		self.assertEqual([tax.rate_applicable_percent._value for tax in taxes], [19, 7])
+		self.assertEqual([tax.basis_amount._value for tax in taxes], [100, 50])
+
+	def test_previous_row_total_includes_line_and_charge_basis(self):
+		generator = self._generator(charge_type="On Previous Row Total")
+		generator.invoice.taxes = generator.invoice.taxes[1:]
+		generator.invoice.taxes[1].row_id = "1"
+		generator.invoice.taxes[1].tax_amount = 28.5
+		with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+			generator._add_taxes_and_charges()
+		tax = generator.doc.trade.settlement.trade_tax.children[0]
+		self.assertEqual(tax.basis_amount._value, 150)
+		self.assertEqual(tax.calculated_amount._value, 28.5)
+
+	def test_not_subject_to_vat_charge_has_no_rate(self):
+		generator = self._generator(rate=0)
+		with (
+			patch.object(duty_tax_fee_category_codes, "get", return_value="O"),
+			patch.object(vat_exemption_reason_codes, "get", return_value="vatex-eu-o"),
+		):
+			generator._add_taxes_and_charges()
+		charge = generator.doc.trade.settlement.allowance_charge.children[0].to_etree()
+		self.assertIsNone(charge.find("ram:CategoryTradeTax/ram:RateApplicablePercent", NAMESPACES))
+
+	def test_standard_charge_requires_explicit_vat(self):
+		generator = self._generator()
+		generator.invoice.taxes.pop()
+		with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+			with self.assertRaises(frappe.ValidationError):
+				generator._add_taxes_and_charges()
+
+	def test_exempt_charge_without_vat_row_included_in_empty_tax_basis(self):
+		generator = self._generator(rate=0)
+		generator.invoice.taxes = [generator.invoice.taxes[1]]
+		with (
+			patch.object(duty_tax_fee_category_codes, "get", return_value="E"),
+			patch.object(vat_exemption_reason_codes, "get", return_value="vatex-eu-79-c"),
+		):
+			self.assertFalse(generator._add_taxes_and_charges())
+			generator._add_empty_tax()
+		self.assertEqual(generator.doc.trade.settlement.trade_tax.children[0].basis_amount._value, 150)
 
 
 class TestVatExemptionReason(FrappeTestCase):

@@ -94,7 +94,7 @@ The following fields of the **Sales Invoice** are currently considered for the e
     - Discount
     - Discount Date
 - Sales Taxes and Charges
-    - The _Charge Type_ "Actual" is used as logistics or service charges. It is only supported by the eInvoice profiles "EXTENDED" and "XRECHNUNG". If you want to add VAT for the service charge, add a _Charge Type_ "On Previous Row Amount" or "On Previous Row Total" immediately after the service charge.
+    - The _Charge Type_ "Actual" is exported as a document-level charge (`SpecifiedTradeAllowanceCharge`) in the eInvoice profiles "EN 16931", "EXTENDED", and "XRECHNUNG". The description supplies the charge reason. For standard-rated VAT, add a _Charge Type_ "On Previous Row Amount" or "On Previous Row Total" immediately after the charge and reference its row. This VAT row supplies the charge's VAT category and rate. Use "On Previous Row Amount" to tax only the charge; "On Previous Row Total" taxes the referenced row's running total. Without a following VAT row, the charge uses its own account's VAT category (then the invoice mappings) at 0%; standard-rated charges require an explicit VAT row. VAT breakdowns with the same category and rate are combined.
     - For _Charge Type_ "On Net Total", use a single tax line. This is currently the only reliable way to get a correctly calculated taxable amount. Invoices with mixed tax rates tend to produce rounding errors. This also happens if one of the tax lines has a 0-amount [1].
     - The _Charge Type_ "On Item Quantity" is not supported.
 - Total

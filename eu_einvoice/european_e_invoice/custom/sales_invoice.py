@@ -7,12 +7,11 @@ from base64 import b64encode
 from typing import TYPE_CHECKING, Any, Literal
 
 import frappe
-from drafthorse.models.accounting import ApplicableTradeTax, AppliedTradeTax
+from drafthorse.models.accounting import ApplicableTradeTax, CategoryTradeTax, TradeAllowanceCharge
 from drafthorse.models.document import Document, IncludedNote
 from drafthorse.models.party import TaxRegistration, URIUniversalCommunication
 from drafthorse.models.payment import PaymentTerms
 from drafthorse.models.references import AdditionalReferencedDocument
-from drafthorse.models.trade import LogisticsServiceCharge
 from drafthorse.models.tradelines import LineItem
 from frappe import _
 from frappe.core.doctype.file.utils import find_file_by_url
@@ -512,30 +511,34 @@ class EInvoiceGenerator:
 				("Tax Category", self.invoice.tax_category),
 				("Sales Taxes and Charges Template", self.invoice.taxes_and_charges),
 			]
-			if tax.charge_type == "Actual" and self.profile >= EInvoiceProfile.EXTENDED:
-				service_charge = LogisticsServiceCharge()
-				service_charge.description = tax.description
-				service_charge.applied_amount = tax.tax_amount
-
-				if len(self.invoice.taxes) > i + 1:
-					vat_line = self.invoice.taxes[i + 1]
-					if vat_line.charge_type in ("On Previous Row Amount", "On Previous Row Total"):
-						# Add applied VAT for the service charge (BR-FXEXT-S-08)
-						service_charge_tax = AppliedTradeTax()
-						service_charge_tax.type_code = "VAT"
-						service_charge_tax.category_code = duty_tax_fee_category_codes.get(
-							[
-								("Account", vat_line.account_head),
-								("Tax Category", self.invoice.tax_category),
-								("Sales Taxes and Charges Template", self.invoice.taxes_and_charges),
-							]
+			if tax.charge_type == "Actual" and self.profile >= EInvoiceProfile.EN16931:
+				charge = TradeAllowanceCharge()
+				charge.indicator = True
+				charge.reason = tax.description
+				charge.actual_amount = flt(tax.tax_amount, 2)
+				charge_tax = CategoryTradeTax()
+				charge_tax.type_code = "VAT"
+				vat_line = self.invoice.taxes[i + 1] if len(self.invoice.taxes) > i + 1 else None
+				if vat_line and (
+					vat_line.charge_type in ("On Previous Row Amount", "On Previous Row Total")
+					and cint(vat_line.get("row_id") or i + 1) == i + 1
+				):
+					lookup[0] = ("Account", vat_line.account_head)
+					rate = vat_line.rate
+				else:
+					rate = 0
+				charge_tax.category_code = duty_tax_fee_category_codes.get(lookup)
+				if charge_tax.category_code._text == "S" and not rate:
+					frappe.throw(
+						_(
+							"An Actual charge with standard VAT requires a following VAT row referencing the charge."
 						)
-						if service_charge_tax.category_code._text != "O":
-							# BR-O-07: category O must not contain a VAT rate
-							service_charge_tax.rate_applicable_percent = vat_line.rate
-						service_charge.trade_tax.add(service_charge_tax)
-
-				self.doc.trade.settlement.service_charge.add(service_charge)
+					)
+				if charge_tax.category_code._text != "O":
+					# BR-O-07: category O must not contain a VAT rate.
+					charge_tax.rate_applicable_percent = rate
+				charge.trade_tax.add(charge_tax)
+				self.doc.trade.settlement.allowance_charge.add(charge)
 			elif tax.charge_type == "On Net Total":
 				tax_rate = tax.rate or frappe.db.get_value("Account", tax.account_head, "tax_rate") or 0
 				if tax.tax_amount == 0 and tax_rate != 0 and tax_rate not in self.item_tax_rates:
@@ -574,11 +577,12 @@ class EInvoiceGenerator:
 				tax_added = True
 			elif tax.charge_type == "On Previous Row Amount":
 				trade_tax = ApplicableTradeTax()
-				trade_tax.basis_amount = self.invoice.taxes[i - 1].tax_amount
+				previous_row = self.invoice.taxes[cint(tax.get("row_id") or i) - 1]
+				trade_tax.basis_amount = previous_row.tax_amount
 				trade_tax.calculated_amount = tax.tax_amount
 
-				if self.invoice.taxes[i - 1].charge_type == "Actual":
-					# VAT for a LogisticsServiceCharge
+				if previous_row.charge_type == "Actual":
+					# VAT for a document-level charge
 					trade_tax.type_code = "VAT"
 				else:
 					# A tax or duty applied on and in addition to existing duties and taxes.
@@ -591,11 +595,12 @@ class EInvoiceGenerator:
 				tax_added = True
 			elif tax.charge_type == "On Previous Row Total":
 				trade_tax = ApplicableTradeTax()
-				trade_tax.basis_amount = self.invoice.taxes[i - 1].total
+				previous_row = self.invoice.taxes[cint(tax.get("row_id") or i) - 1]
+				trade_tax.basis_amount = previous_row.total
 				trade_tax.calculated_amount = tax.tax_amount
 
-				if self.invoice.taxes[i - 1].charge_type == "Actual":
-					# VAT for a LogisticsServiceCharge
+				if previous_row.charge_type == "Actual":
+					# VAT for a document-level charge
 					trade_tax.type_code = "VAT"
 				else:
 					# A tax or duty applied on and in addition to existing duties and taxes.
@@ -606,6 +611,26 @@ class EInvoiceGenerator:
 				self._set_document_vat_exemption_reason(trade_tax, lookup)
 				self.doc.trade.settlement.trade_tax.add(trade_tax)
 				tax_added = True
+
+		if self.doc.trade.settlement.allowance_charge.children:
+			# EN 16931 requires one VAT breakdown per category and rate (BR-S-01, BR-Z-01, ...).
+			grouped = {}
+			for trade_tax in self.doc.trade.settlement.trade_tax.children:
+				key = (
+					trade_tax.type_code._text,
+					trade_tax.category_code._text,
+					trade_tax.rate_applicable_percent._value,
+				)
+				if key in grouped:
+					grouped[key].basis_amount = (
+						grouped[key].basis_amount._value + trade_tax.basis_amount._value
+					)
+					grouped[key].calculated_amount = (
+						grouped[key].calculated_amount._value + trade_tax.calculated_amount._value
+					)
+				else:
+					grouped[key] = trade_tax
+			self.doc.trade.settlement.trade_tax.children[:] = grouped.values()
 
 		return tax_added
 
@@ -619,7 +644,9 @@ class EInvoiceGenerator:
 				("Sales Taxes and Charges Template", self.invoice.taxes_and_charges),
 			]
 		)
-		trade_tax.basis_amount = self.invoice.net_total
+		trade_tax.basis_amount = self.invoice.net_total + sum(
+			tax.tax_amount for tax in (self.invoice.taxes or []) if tax.charge_type == "Actual"
+		)
 		self._set_header_vat_category_rate(trade_tax, 0)
 		trade_tax.calculated_amount = 0
 		self._set_document_vat_exemption_reason(
@@ -803,11 +830,11 @@ def validate_doc(doc, event):
 
 		if (
 			tax_row.charge_type == "Actual"
-			and EInvoiceProfile(doc.einvoice_profile) < EInvoiceProfile.EXTENDED
+			and EInvoiceProfile(doc.einvoice_profile) < EInvoiceProfile.EN16931
 		):
 			frappe.msgprint(
 				_(
-					"{0} row #{1}: The charge type 'Actual' is only supported in the eInvoice profiles 'EXTENDED' and 'XRECHNUNG'."
+					"{0} row #{1}: The charge type 'Actual' is only supported in the eInvoice profiles 'EN 16931', 'EXTENDED' and 'XRECHNUNG'."
 				).format(_(doc.meta.get_label("taxes")), tax_row.idx),
 				alert=True,
 				indicator="orange",
