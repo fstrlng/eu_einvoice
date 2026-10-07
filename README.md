@@ -13,16 +13,6 @@ This fork is based on ALYF's `version-15-hotfix` branch for ERPNext v15. It adds
 - **Partial payments:** The exported paid amount is calculated from the invoice grand total minus the outstanding amount, so it includes allocated advances and payments made after submission. Outstanding amounts held in a different party account currency are converted to the invoice currency. For example, a EUR 119 invoice with EUR 50 already paid exports EUR 50 as paid and EUR 69 as due.
 - **XRechnung early-payment discounts (Skonto):** Percentage discounts are exported when the discount date is on or after the posting date. Earlier dates are omitted. For example, a 2% discount within ten days is exported as `#SKONTO#TAGE=10#PROZENT=2.00#`. Payment descriptions and a separate discount basis amount are retained where applicable.
 
-Regression tests cover these export changes, including partial and full payments, advances, foreign currencies, and discount-date boundaries. The incoming-invoice import follows the upstream implementation.
-
-To install this fork on an ERPNext v15 bench:
-
-```bash
-cd $PATH_TO_YOUR_BENCH
-bench get-app https://github.com/fstrlng/eu_einvoice --branch version-15-hotset
-bench --site YOUR_SITE install-app eu_einvoice
-```
-
 ## Documentation
 
 User documentation lives under [`eu_einvoice/docs/`](eu_einvoice/docs). [Compendium](https://github.com/alyf-de/compendium) serves these files in Desk at `/app/docs` when that app is installed.
