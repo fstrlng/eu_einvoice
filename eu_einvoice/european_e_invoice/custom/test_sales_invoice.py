@@ -572,6 +572,98 @@ class TestApplicableTradeTaxes(FrappeTestCase):
 		self.assertEqual([t.basis_amount._value for t in trade_taxes], [100, 100, 100, 10, 0])
 
 
+class TestPaymentExport(FrappeTestCase):
+	def _generator(self, **values):
+		invoice = frappe._dict(
+			net_total=100,
+			taxes=[frappe._dict(charge_type="On Net Total", tax_amount=19)],
+			currency="EUR",
+			party_account_currency="EUR",
+			conversion_rate=1,
+			grand_total=119,
+			outstanding_amount=119,
+			total_advance=0,
+			posting_date="2026-10-06",
+			payment_schedule=[],
+		)
+		invoice.update(values)
+		generator = EInvoiceGenerator(EInvoiceProfile.XRECHNUNG, invoice, None, None)
+		generator.doc = Document()
+		return generator
+
+	def test_payment_totals(self):
+		for outstanding, advance, expected_paid in (
+			(119, 0, 0),
+			(69, 0, 50),
+			(99, 20, 20),
+			(49, 20, 70),
+			(0, 0, 119),
+		):
+			with self.subTest(outstanding=outstanding, advance=advance):
+				generator = self._generator(outstanding_amount=outstanding, total_advance=advance)
+				generator._set_totals()
+				summation = generator.doc.trade.settlement.monetary_summation
+				self.assertEqual(float(summation.prepaid_total._value), expected_paid)
+				self.assertEqual(float(summation.due_amount._value), outstanding)
+				self.assertEqual(
+					summation.grand_total._amount - summation.prepaid_total._value,
+					summation.due_amount._value,
+				)
+
+	def test_outstanding_amount_is_converted_to_invoice_currency(self):
+		generator = self._generator(
+			currency="USD", party_account_currency="EUR", conversion_rate=0.8, outstanding_amount=55.2
+		)
+		generator._set_totals()
+		summation = generator.doc.trade.settlement.monetary_summation
+		self.assertEqual(float(summation.prepaid_total._value), 50)
+		self.assertEqual(float(summation.due_amount._value), 69)
+
+	def test_invoice_currency_outstanding_is_not_converted(self):
+		generator = self._generator(
+			currency="USD", party_account_currency="USD", conversion_rate=0.8, outstanding_amount=69
+		)
+		generator._set_totals()
+		summation = generator.doc.trade.settlement.monetary_summation
+		self.assertEqual(float(summation.prepaid_total._value), 50)
+		self.assertEqual(float(summation.due_amount._value), 69)
+
+	def _payment_description(self, discount_date, payment_amount=119, description=""):
+		generator = self._generator(
+			payment_schedule=[
+				frappe._dict(
+					description=description,
+					due_date="2026-11-05",
+					discount=2,
+					discount_date=discount_date,
+					discount_type="Percentage",
+					payment_amount=payment_amount,
+				)
+			]
+		)
+		generator._add_payment_terms()
+		return generator.doc.trade.settlement.terms.children[0].description._text
+
+	def test_skonto_for_future_discount_date(self):
+		self.assertEqual(
+			self._payment_description("2026-10-16"), "#SKONTO#TAGE=10#PROZENT=2.00#\n"
+		)
+
+	def test_skonto_for_same_day(self):
+		self.assertEqual(
+			self._payment_description("2026-10-06"), "#SKONTO#TAGE=0#PROZENT=2.00#\n"
+		)
+
+	def test_skonto_before_posting_date_is_omitted(self):
+		self.assertEqual(self._payment_description("2026-10-05", description="Payment terms"), "Payment terms")
+
+	def test_skonto_preserves_description_and_partial_basis(self):
+		self.assertEqual(
+			self._payment_description("2026-10-16", payment_amount=59.5, description="Terms #1"),
+			"Terms //1\n#SKONTO#TAGE=10#PROZENT=2.00#BASISBETRAG=59.50#\n",
+		)
+
+
 class TestXmlAttachmentNaming(FrappeTestCase):
 	def test_auto_name_format_from_e_invoice_settings(self):
 		doc = frappe._dict(name="SINV-00001", po_no="PO-42", doctype="Sales Invoice")

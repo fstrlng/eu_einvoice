@@ -742,7 +742,7 @@ class EInvoiceGenerator:
 					)  # the character "#" is not allowed in the free text
 					if ps.discount_type == "Percentage":
 						discount_days = date_diff(ps.discount_date, self.invoice.posting_date)
-						if discount_days < 0:
+						if discount_days >= 0:
 							basis_amount = (
 								ps.payment_amount
 								if round(ps.payment_amount, 2) != round(self.invoice.outstanding_amount, 2)
@@ -801,14 +801,21 @@ class EInvoiceGenerator:
 		# [BR-DEC-14]-The allowed maximum number of decimals for the Invoice total amount with VAT (BT-112) is 2.
 		self.doc.trade.settlement.monetary_summation.grand_total = flt(self.invoice.grand_total, 2)
 
+		outstanding_amount = flt(self.invoice.outstanding_amount)
+		party_account_currency = self.invoice.get("party_account_currency")
+		if party_account_currency and party_account_currency != self.invoice.currency:
+			# ERPNext stores the outstanding amount in the party account currency.
+			outstanding_amount /= self.invoice.conversion_rate
+		outstanding_amount = flt(outstanding_amount, 2)
+
+		# Include payments made after submission as well as allocated advances.
 		# [BR-DEC-16]-The allowed maximum number of decimals for the Paid amount (BT-113) is 2.
-		if self.invoice.outstanding_amount == 0:
-			self.doc.trade.settlement.monetary_summation.prepaid_total = flt(self.invoice.grand_total, 2)
-		else:
-			self.doc.trade.settlement.monetary_summation.prepaid_total = flt(self.invoice.total_advance, 2)
+		self.doc.trade.settlement.monetary_summation.prepaid_total = flt(
+			flt(self.invoice.grand_total, 2) - outstanding_amount, 2
+		)
 
 		# [BR-DEC-18]-The allowed maximum number of decimals for the Amount due for payment (BT-115) is 2.
-		self.doc.trade.settlement.monetary_summation.due_amount = flt(self.invoice.outstanding_amount, 2)
+		self.doc.trade.settlement.monetary_summation.due_amount = outstanding_amount
 
 
 def validate_vat_id(vat_id: str) -> str:
