@@ -4,6 +4,25 @@ Create and import e-invoices with ERPNext.
 
 This app converts between ERPNext and UN/CEFACT Cross-Industry-Invoice (CII) XML in the BASIC, EN 16931, EXTENDED, and XRECHNUNG profiles. All profiles except "XRECHNUNG" can be embedded in a PDF file (ZUGFeRD / Factur-X). UBL invoices and Peppol transport are out of scope.
 
+## Hotset fork: changes in `version-15-hotset`
+
+This fork is based on ALYF's `version-15-hotfix` branch for ERPNext v15. It adds the following fixes to the export of **Sales Invoices**:
+
+- **Document-level charges:** Rows with the charge type "Actual", such as packaging or freight, are exported as document-level charges in the EN 16931, EXTENDED, and XRECHNUNG profiles. The row description supplies the charge reason. A following "On Previous Row Amount" or "On Previous Row Total" VAT row supplies the VAT category and rate; standard-rated charges require such a VAT row. VAT breakdowns with the same category and rate are combined.
+- **VAT for consecutive charges:** Multiple consecutive "Actual" charges can share one following "On Previous Row Total" VAT row referencing the last charge. The taxable basis includes the invoice net total and the charges once. For this invoice-wide pattern, the VAT rate also supplies the line-item rate when no Item Tax Template applies. See the [Sales Invoice documentation](eu_einvoice/docs/en/eu_einvoice/sales-invoice.md) for the supported configurations.
+- **Partial payments:** The exported paid amount is calculated from the invoice grand total minus the outstanding amount, so it includes allocated advances and payments made after submission. Outstanding amounts held in a different party account currency are converted to the invoice currency. For example, a EUR 119 invoice with EUR 50 already paid exports EUR 50 as paid and EUR 69 as due.
+- **XRechnung early-payment discounts (Skonto):** Percentage discounts are exported when the discount date is on or after the posting date. Earlier dates are omitted. For example, a 2% discount within ten days is exported as `#SKONTO#TAGE=10#PROZENT=2.00#`. Payment descriptions and a separate discount basis amount are retained where applicable.
+
+Regression tests cover these export changes, including partial and full payments, advances, foreign currencies, and discount-date boundaries. The incoming-invoice import follows the upstream implementation.
+
+To install this fork on an ERPNext v15 bench:
+
+```bash
+cd $PATH_TO_YOUR_BENCH
+bench get-app https://github.com/fstrlng/eu_einvoice --branch version-15-hotset
+bench --site YOUR_SITE install-app eu_einvoice
+```
+
 ## Documentation
 
 User documentation lives under [`eu_einvoice/docs/`](eu_einvoice/docs). [Compendium](https://github.com/alyf-de/compendium) serves these files in Desk at `/app/docs` when that app is installed.
