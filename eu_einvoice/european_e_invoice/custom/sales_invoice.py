@@ -527,10 +527,14 @@ class EInvoiceGenerator:
 				("Sales Taxes and Charges Template", self.invoice.taxes_and_charges),
 			]
 			if tax.charge_type == "Actual" and self.profile >= EInvoiceProfile.EN16931:
+				charge_amount = flt(tax.tax_amount, 2)
+				if not charge_amount:
+					# Omit empty charges without changing tax-row indices or VAT references.
+					continue
 				charge = TradeAllowanceCharge()
 				charge.indicator = True
 				charge.reason = tax.description
-				charge.actual_amount = flt(tax.tax_amount, 2)
+				charge.actual_amount = charge_amount
 				charge_tax = CategoryTradeTax()
 				charge_tax.type_code = "VAT"
 				vat_line = self._get_actual_charge_vat_row(i)

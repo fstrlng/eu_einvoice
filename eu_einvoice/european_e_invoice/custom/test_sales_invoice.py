@@ -290,6 +290,42 @@ class TestActualCharges(FrappeTestCase):
 		self.assertIsNone(generator._get_actual_charge_vat_row(0))
 		self.assertIs(generator._get_actual_charge_vat_row(3), generator.invoice.taxes[-1])
 
+	def test_zero_actual_charges_do_not_require_vat_mapping(self):
+		# ARS-26808105: VAT references Insurance (row 3); Customs (row 4) is empty.
+		for profile in (EInvoiceProfile.EN16931, EInvoiceProfile.XRECHNUNG, EInvoiceProfile.EXTENDED):
+			with self.subTest(profile=profile):
+				generator = self._four_charge_generator(profile)
+				generator.invoice.net_total = -800.75
+				amounts = [-16.4, -4.6, 0, 0]
+				total = generator.invoice.net_total
+				for tax, amount in zip(generator.invoice.taxes[:-1], amounts, strict=True):
+					total += amount
+					tax.update(tax_amount=amount, total=total)
+				generator.invoice.taxes[-1].update(row_id="3", tax_amount=-156.13)
+				with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+					self.assertTrue(generator._add_taxes_and_charges())
+				charges = generator.doc.trade.settlement.allowance_charge.children
+				self.assertEqual([charge.actual_amount._value for charge in charges], [-16.4, -4.6])
+				self.assertEqual(
+					[charge.trade_tax.children[0].rate_applicable_percent._value for charge in charges], [19, 19]
+				)
+				taxes = generator.doc.trade.settlement.trade_tax.children
+				self.assertEqual(len(taxes), 1)
+				self.assertEqual(taxes[0].basis_amount._value, -821.75)
+				self.assertEqual(taxes[0].calculated_amount._value, -156.13)
+				self.assertEqual(len(generator.invoice.taxes), 5)
+				self.assertEqual(generator.invoice.taxes[-1].row_id, "3")
+
+	def test_actual_charge_rounded_to_zero_is_omitted(self):
+		for amount in (0, 0.004, -0.004):
+			with self.subTest(amount=amount):
+				generator = self._generator()
+				generator.invoice.taxes.pop()
+				generator.invoice.taxes[1].tax_amount = amount
+				with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
+					self.assertTrue(generator._add_taxes_and_charges())
+				self.assertEqual(generator.doc.trade.settlement.allowance_charge.children, [])
+
 	def test_different_vat_rates_remain_separate(self):
 		generator = self._generator()
 		generator.invoice.taxes[2].rate = 7
