@@ -211,15 +211,18 @@ class TestActualCharges(FrappeTestCase):
 		line = LineItem()
 		line.document.line_id = "1"
 		line.product.name = "Product"
-		line.agreement.net.amount = 100
-		line.delivery.billed_quantity = (1, "C62")
+		line.agreement.net.amount = abs(generator.invoice.net_total)
+		line.delivery.billed_quantity = (-1 if generator.invoice.net_total < 0 else 1, "C62")
 		line.settlement.trade_tax.type_code = "VAT"
 		line.settlement.trade_tax.category_code = "S"
 		line.settlement.trade_tax.rate_applicable_percent = get_item_rate(None, generator.invoice.taxes)
-		line.settlement.monetary_summation.total_amount = 100
+		line.settlement.monetary_summation.total_amount = generator.invoice.net_total
 		doc.trade.items.add(line)
 		doc.trade.settlement.currency_code = "EUR"
-		generator.invoice.update(currency="EUR", grand_total=178.5, outstanding_amount=178.5, total_advance=0)
+		grand_total = generator.invoice.net_total + sum(tax.tax_amount for tax in generator.invoice.taxes)
+		generator.invoice.update(
+			currency="EUR", grand_total=grand_total, outstanding_amount=grand_total, total_advance=0
+		)
 		with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
 			generator._add_taxes_and_charges()
 		generator._set_totals()
@@ -302,6 +305,7 @@ class TestActualCharges(FrappeTestCase):
 					total += amount
 					tax.update(tax_amount=amount, total=total)
 				generator.invoice.taxes[-1].update(row_id="3", tax_amount=-156.13)
+				self.assertEqual(get_item_rate(None, generator.invoice.taxes), 19)
 				with patch.object(duty_tax_fee_category_codes, "get", return_value="S"):
 					self.assertTrue(generator._add_taxes_and_charges())
 				charges = generator.doc.trade.settlement.allowance_charge.children
@@ -315,6 +319,10 @@ class TestActualCharges(FrappeTestCase):
 				self.assertEqual(taxes[0].calculated_amount._value, -156.13)
 				self.assertEqual(len(generator.invoice.taxes), 5)
 				self.assertEqual(generator.invoice.taxes[-1].row_id, "3")
+				if profile in (EInvoiceProfile.EN16931, EInvoiceProfile.EXTENDED):
+					# Validate the full cancellation XML, including line rate and VAT basis.
+					generator.doc = Document()
+					self._validate_complete_invoice(generator)
 
 	def test_actual_charge_rounded_to_zero_is_omitted(self):
 		for amount in (0, 0.004, -0.004):

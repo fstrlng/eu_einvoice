@@ -1045,6 +1045,7 @@ def get_item_rate(item_tax_template: str | None, taxes: list) -> float | None:
 	   ``rate``.
 	4) For consecutive *Actual* charges followed by one *On Previous Row Total* row covering
 	   the entire invoice, use that VAT row's ``rate`` for the invoice lines as well.
+	   Unreferenced trailing charges with a zero export amount do not affect this fallback.
 	"""
 	if item_tax_template:
 		tax_template = frappe.get_cached_doc("Item Tax Template", item_tax_template)
@@ -1076,9 +1077,12 @@ def get_item_rate(item_tax_template: str | None, taxes: list) -> float | None:
 		len(taxes) > 1
 		and all(tax.charge_type == "Actual" for tax in taxes[:-1])
 		and taxes[-1].charge_type == "On Previous Row Total"
-		and cint(taxes[-1].get("row_id") or len(taxes) - 1) == len(taxes) - 1
 	):
-		return taxes[-1].rate
+		reference_row = cint(taxes[-1].get("row_id") or len(taxes) - 1)
+		if 1 <= reference_row < len(taxes) and all(
+			not flt(tax.tax_amount, 2) for tax in taxes[reference_row:-1]
+		):
+			return taxes[-1].rate
 	return None
 
 
