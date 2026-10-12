@@ -293,14 +293,17 @@ class EInvoiceGenerator:
 				break
 
 	def _set_seller_tax_id(self):
-		if not self.invoice.company_tax_id:
+		# Use the dedicated Company field for the VAT registration.  The standard
+		# company_tax_id field remains the backwards-compatible fallback.
+		tax_id = (self.company.get("custom_vat_id") or self.invoice.company_tax_id or "").strip()
+		if not tax_id:
 			return
 
 		try:
-			seller_tax_id = validate_vat_id(self.invoice.company_tax_id.strip())
+			seller_tax_id = validate_vat_id(tax_id)
 			seller_vat_scheme = "VA"
 		except ValueError:
-			seller_tax_id = self.invoice.company_tax_id.strip()
+			seller_tax_id = tax_id
 			seller_vat_scheme = "FC"
 
 		self.doc.trade.agreement.seller.tax_registrations.add(
