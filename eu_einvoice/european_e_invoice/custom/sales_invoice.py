@@ -395,18 +395,18 @@ class EInvoiceGenerator:
 
 		if is_valid_swiss_vat_id(self.invoice.tax_id):
 			customer_tax_id = normalize_swiss_vat_id(self.invoice.tax_id)
-			customer_vat_scheme = "VA"
 		else:
 			try:
 				customer_tax_id = validate_vat_id(self.invoice.tax_id.strip())
-				customer_vat_scheme = "VA"
 			except ValueError:
-				customer_tax_id = self.invoice.tax_id.strip()
-				customer_vat_scheme = "FC"
+				# BR-FXEXT-03 only permits VAT registration IDs for the buyer in the
+				# affected business partner roles. Do not export a local tax number
+				# with scheme FC, for example a third-country fiscal identifier.
+				return
 
 		self.doc.trade.agreement.buyer.tax_registrations.add(
 			TaxRegistration(
-				id=(customer_vat_scheme, customer_tax_id),
+				id=("VA", customer_tax_id),
 			)
 		)
 

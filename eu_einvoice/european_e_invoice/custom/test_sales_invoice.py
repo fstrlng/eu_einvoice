@@ -728,6 +728,29 @@ class TestPaymentExport(FrappeTestCase):
 		)
 
 
+class TestBuyerTaxRegistration(FrappeTestCase):
+	def _generator(self, tax_id):
+		generator = EInvoiceGenerator(EInvoiceProfile.EXTENDED, frappe._dict(tax_id=tax_id), None, None)
+		generator.doc = Document()
+		return generator
+
+	def test_omits_local_third_country_tax_number(self):
+		generator = self._generator("12-3456789")
+
+		generator._set_buyer_tax_id()
+
+		self.assertEqual(generator.doc.trade.agreement.buyer.tax_registrations.children, [])
+
+	def test_exports_valid_vat_registration_with_va_scheme(self):
+		generator = self._generator("US123456789")
+
+		generator._set_buyer_tax_id()
+
+		registration = generator.doc.trade.agreement.buyer.tax_registrations.children[0]
+		self.assertEqual(registration.id._scheme_id, "VA")
+		self.assertEqual(registration.id._text, "US123456789")
+
+
 class TestXmlAttachmentNaming(FrappeTestCase):
 	def test_auto_name_format_from_e_invoice_settings(self):
 		doc = frappe._dict(name="SINV-00001", po_no="PO-42", doctype="Sales Invoice")
