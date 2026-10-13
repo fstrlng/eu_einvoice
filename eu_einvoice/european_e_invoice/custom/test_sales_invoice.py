@@ -17,6 +17,7 @@ from eu_einvoice.european_e_invoice.custom.sales_invoice import (
 	get_einvoice,
 	get_item_rate,
 	get_xml_attachment_file_base_name,
+	validate_doc,
 	vat_exemption_reason_codes,
 )
 from eu_einvoice.schematron import get_validation_errors
@@ -102,6 +103,25 @@ class TestGetItemRate(FrappeTestCase):
 			patch("frappe.get_meta", return_value=meta),
 		):
 			self.assertEqual(get_item_rate("5 %", taxes), 19)
+
+
+class TestEInvoiceProfile(FrappeTestCase):
+	def test_empty_profile_skips_einvoice_validation_and_generation(self):
+		doc = frappe._dict(
+			einvoice_profile="",
+			einvoice_is_correct=1,
+			validation_errors="previous error",
+			validation_warnings="previous warning",
+			taxes=[frappe._dict(charge_type="Actual")],
+		)
+
+		with patch("frappe.get_single") as get_settings:
+			validate_doc(doc, None)
+
+		get_settings.assert_not_called()
+		self.assertEqual(doc.einvoice_is_correct, 0)
+		self.assertEqual(doc.validation_errors, "")
+		self.assertEqual(doc.validation_warnings, "")
 
 
 class TestActualCharges(FrappeTestCase):
