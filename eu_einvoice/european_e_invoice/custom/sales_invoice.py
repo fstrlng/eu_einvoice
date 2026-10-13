@@ -20,7 +20,13 @@ from frappe.model.naming import parse_naming_series
 from frappe.utils import cstr
 from frappe.utils.data import cint, date_diff, flt, getdate, to_markdown
 
-from eu_einvoice.common_codes import CommonCodeRetriever
+from eu_einvoice.common_codes import (
+	DUTY_TAX_FEE_CATEGORY_CODE_LIST,
+	PAYMENT_CODE_LIST,
+	UNIT_CODE_LIST,
+	VAT_EXEMPTION_REASON_CODE_LIST,
+	CommonCodeRetriever,
+)
 from eu_einvoice.schematron import get_validation_errors
 from eu_einvoice.switzerland import is_valid_swiss_vat_id, normalize_swiss_vat_id
 from eu_einvoice.utils import EInvoiceProfile, get_drafthorse_schema, get_guideline
@@ -36,12 +42,10 @@ if TYPE_CHECKING:
 
 	from eu_einvoice.european_e_invoice.doctype.e_invoice_settings.e_invoice_settings import EInvoiceSettings
 
-uom_codes = CommonCodeRetriever(
-	["urn:xoev-de:kosit:codeliste:rec20_3", "urn:xoev-de:kosit:codeliste:rec21_3"], "C62"
-)
-payment_means_codes = CommonCodeRetriever(["urn:xoev-de:xrechnung:codeliste:untdid.4461_3"], "ZZZ")
-duty_tax_fee_category_codes = CommonCodeRetriever(["urn:xoev-de:kosit:codeliste:untdid.5305_3"], "S")
-vat_exemption_reason_codes = CommonCodeRetriever(["urn:xoev-de:kosit:codeliste:vatex_1"], "vatex-eu-ae")
+uom_codes = CommonCodeRetriever([UNIT_CODE_LIST], "C62")
+payment_means_codes = CommonCodeRetriever([PAYMENT_CODE_LIST], "ZZZ")
+duty_tax_fee_category_codes = CommonCodeRetriever([DUTY_TAX_FEE_CATEGORY_CODE_LIST], "S")
+vat_exemption_reason_codes = CommonCodeRetriever([VAT_EXEMPTION_REASON_CODE_LIST], "vatex-eu-ae")
 # VAT categories that need an exemption reason on the VAT breakdown (BR-AE-10, BR-E-10, ...)
 EXEMPT_VAT_CATEGORIES = ("AE", "E", "G", "K", "O")
 

@@ -16,6 +16,7 @@ from frappe.model.document import Document
 from frappe.model.mapper import get_mapped_doc
 from lxml.etree import XMLSyntaxError
 
+from eu_einvoice.common_codes import UNIT_CODE_LIST
 from eu_einvoice.schematron import get_validation_errors
 from eu_einvoice.utils import EInvoiceProfile, get_profile
 
@@ -361,13 +362,9 @@ class EInvoiceImport(Document):
 				continue
 
 			if row.unit_code:
-				rec20_3 = get_docnames_for("urn:xoev-de:kosit:codeliste:rec20_3", "UOM", row.unit_code)
-				if rec20_3:
-					row.uom = rec20_3[0]
-				else:
-					rec21_3 = get_docnames_for("urn:xoev-de:kosit:codeliste:rec21_3", "UOM", row.unit_code)
-					if rec21_3:
-						row.uom = rec21_3[0]
+				units = get_docnames_for(UNIT_CODE_LIST, "UOM", row.unit_code)
+				if units:
+					row.uom = units[0]
 			elif row.item:
 				stock_uom, purchase_uom = frappe.db.get_value("Item", row.item, ["stock_uom", "purchase_uom"])
 				row.uom = purchase_uom or stock_uom

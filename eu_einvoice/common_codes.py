@@ -1,5 +1,10 @@
 from erpnext.edi.doctype.code_list.code_list import get_codes_for, get_default_code
 
+UNIT_CODE_LIST = "urn:cef.eu:names:identifier:Unit-2026-05-15"
+PAYMENT_CODE_LIST = "urn:cef.eu:names:identifier:Payment-2026-05-15"
+DUTY_TAX_FEE_CATEGORY_CODE_LIST = "urn:cef.eu:names:identifier:5305-2026-05-15"
+VAT_EXEMPTION_REASON_CODE_LIST = "urn:cef.eu:names:identifier:VATEX-2026-05-15"
+
 
 class CommonCodeRetriever:
 	"""Retrieve a common code from a list of code lists and a list of records."""

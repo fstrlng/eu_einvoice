@@ -15,14 +15,13 @@ Common codes belong to a code list. Import the code lists and map the codes you 
 
 Code List | Mapped DocType | Default Value
 ----------|----------------|--------------
-[UNTDID 4461 Payment means code](https://www.xrepository.de/api/xrepository/urn:xoev-de:xrechnung:codeliste:untdid.4461_3:technischerBestandteilGenericode) | Payment Terms Template, Mode of Payment | ZZZ
-[Codes for Units of Measure Used in International Trade](https://www.xrepository.de/api/xrepository/urn:xoev-de:kosit:codeliste:rec20_3:technischerBestandteilGenericode) | UOM | C62
-[Codes for Passengers, Types of Cargo, Packages and Packaging Materials](https://www.xrepository.de/api/xrepository/urn:xoev-de:kosit:codeliste:rec21_3:technischerBestandteilGenericode) (optional) | UOM | C62
-[Codes for Duty Tax and Fee Categories](https://www.xrepository.de/api/xrepository/urn:xoev-de:kosit:codeliste:untdid.5305_3:technischerBestandteilGenericode) | Item Tax Template, Account, Tax Category, Sales Taxes and Charges Template | S
-[VAT exemption reason code list](https://www.xrepository.de/api/xrepository/urn:xoev-de:kosit:codeliste:vatex_1:technischerBestandteilGenericode) | Item Tax Template, Account, Tax Category, Sales Taxes and Charges Template | vatex-eu-ae
-[Electronic Address Scheme](https://www.xrepository.de/api/xrepository/urn:xoev-de:kosit:codeliste:eas_5:technischerBestandteilGenericode) (Mapping: _as Title_: scheme-name, _as Code_: aesc, _as Description_: remark) | N/A | EM
+Payment (`urn:cef.eu:names:identifier:Payment-2026-05-15`) | Payment Terms Template, Mode of Payment | ZZZ
+Unit (`urn:cef.eu:names:identifier:Unit-2026-05-15`) | UOM | C62
+5305 (`urn:cef.eu:names:identifier:5305-2026-05-15`) | Item Tax Template, Account, Tax Category, Sales Taxes and Charges Template | S
+VATEX (`urn:cef.eu:names:identifier:VATEX-2026-05-15`) | Item Tax Template, Account, Tax Category, Sales Taxes and Charges Template | vatex-eu-ae
+EAS (`urn:cef.eu:names:identifier:EAS-2026-05-15`) (Mapping: _as Title_: scheme-name, _as Code_: aesc, _as Description_: remark) | N/A | EM
 
-For example, your standard **Payment Terms Template** is "Bank Transfer, 30 days". Find the suitable **Common Code** for bank transfers in the **Code List** "UNTDID.4461". In this case, the code is "58". Add a row to the _Applies To_ table, select "Payment Terms Template" as the _Link Document Type_ and "Bank Transfer, 30 days" as the _Link Name_. If you now create an Invoice with this **Payment Terms Template**, the eInvoice contains the code "58" for the payment means, signalling that the payment should be done via bank transfer.
+For example, your standard **Payment Terms Template** is "Bank Transfer, 30 days". Find the suitable **Common Code** for bank transfers in the **Code List** "Payment". In this case, the code is "58". Add a row to the _Applies To_ table, select "Payment Terms Template" as the _Link Document Type_ and "Bank Transfer, 30 days" as the _Link Name_. If you now create an Invoice with this **Payment Terms Template**, the eInvoice contains the code "58" for the payment means, signalling that the payment should be done via bank transfer.
 
 The retrieval of codes goes from the most specific to the most general. For example, for the VAT type of a line item, the app first looks for a code using the item's _Item Tax Template_ and _Income Account_, then falls back to the code for the invoice's _Tax Category_ or _Sales Taxes and Charges Template_.
 
@@ -47,7 +46,7 @@ If not specified, email addresses are used as electronic addresses for outgoing 
 
 If you want your eInvoice to contain bank details, set up a **Mode of Payment** of type "Bank", link the company's corresponding **Account** and create a **Bank Account** for the same account. Select this **Mode of Payment** in your **Payment Terms Template** under _Payment Terms_ -> _Mode of Payment_.
 
-Then map a **Common Code** from **Code List** "UNTDID.4461", for example "Credit Transfer" (30) or "SEPA Credit Transfer" (58), to the **Mode of Payment**.
+Then map a **Common Code** from **Code List** "Payment", for example "Credit Transfer" (30) or "SEPA Credit Transfer" (58), to the **Mode of Payment**.
 
 The eInvoice standard only supports one payment means per invoice, so do not specify multiple **Modes of Payment** in the same invoice.
 
