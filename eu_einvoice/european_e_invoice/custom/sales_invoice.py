@@ -667,8 +667,10 @@ class EInvoiceGenerator:
 				("Sales Taxes and Charges Template", self.invoice.taxes_and_charges),
 			]
 		)
-		trade_tax.basis_amount = self.invoice.net_total + sum(
-			tax.tax_amount for tax in (self.invoice.taxes or []) if tax.charge_type == "Actual"
+		trade_tax.basis_amount = flt(
+			self.invoice.net_total
+			+ sum(tax.tax_amount for tax in (self.invoice.taxes or []) if tax.charge_type == "Actual"),
+			self.invoice.precision("net_total"),
 		)
 		self._set_header_vat_category_rate(trade_tax, 0)
 		trade_tax.calculated_amount = 0

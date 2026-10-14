@@ -403,6 +403,16 @@ class TestActualCharges(FrappeTestCase):
 			generator._add_empty_tax()
 		self.assertEqual(generator.doc.trade.settlement.trade_tax.children[0].basis_amount._value, 150)
 
+	def test_empty_tax_basis_is_rounded_to_currency_precision(self):
+		"""Avoid serializing float artifacts such as 331.20000000000005 in BT-116."""
+		generator = self._generator(rate=0)
+		generator.invoice.net_total = 327.6
+		generator.invoice.taxes = [generator.invoice.taxes[1]]
+		generator.invoice.taxes[0].tax_amount = 3.6
+		with patch.object(duty_tax_fee_category_codes, "get", return_value="E"):
+			generator._add_empty_tax()
+		self.assertEqual(generator.doc.trade.settlement.trade_tax.children[0].basis_amount._value, 331.2)
+
 
 class TestVatExemptionReason(FrappeTestCase):
 	def test_empty_header_tax_skips_exemption_for_zero_rated(self):
