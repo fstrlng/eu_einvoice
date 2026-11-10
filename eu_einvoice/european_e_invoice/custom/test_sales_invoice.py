@@ -20,12 +20,43 @@ from eu_einvoice.european_e_invoice.custom.sales_invoice import (
 	validate_doc,
 	vat_exemption_reason_codes,
 )
+from eu_einvoice.overrides.email_queue import get_print_attachment
 from eu_einvoice.schematron import get_validation_errors
 from eu_einvoice.utils import EInvoiceProfile, get_drafthorse_schema, get_guideline
 
 NAMESPACES = {"ram": "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"}
 # Schematron rules about VAT categories, rates and exemption reasons
 VAT_RULES = r"BR-(O|E|AE|G|IC|Z|S)-\d+|BR-4[5-9]|BR-DE-14|BR-CO-17"
+
+
+class TestEInvoiceEmailQueue(FrappeTestCase):
+	def test_embeds_xml_in_sales_invoice_pdf_attachment(self):
+		attachment = {"doctype": "Sales Invoice", "name": "SINV-00001"}
+		pdf_attachment = {"fname": "SINV-00001.pdf", "fcontent": b"pdf"}
+
+		with (
+			patch.object(frappe, "attach_print", return_value=pdf_attachment) as attach_print,
+			patch(
+				"eu_einvoice.overrides.email_queue.attach_xml_to_pdf", return_value=b"zugferd-pdf"
+			) as attach_xml,
+		):
+			result = get_print_attachment(attachment)
+
+		attach_print.assert_called_once_with(**attachment)
+		attach_xml.assert_called_once_with("SINV-00001", b"pdf")
+		self.assertEqual(result["fcontent"], b"zugferd-pdf")
+
+	def test_keeps_standard_attachment_for_other_doctypes(self):
+		attachment = {"doctype": "Sales Order", "name": "SAL-ORD-00001"}
+		pdf_attachment = {"fname": "SAL-ORD-00001.pdf", "fcontent": b"pdf"}
+
+		with (
+			patch.object(frappe, "attach_print", return_value=pdf_attachment),
+			patch("eu_einvoice.overrides.email_queue.attach_xml_to_pdf") as attach_xml,
+		):
+			self.assertIs(get_print_attachment(attachment), pdf_attachment)
+
+		attach_xml.assert_not_called()
 
 
 class TestGetItemRate(FrappeTestCase):

@@ -136,9 +136,9 @@ after_install = "eu_einvoice.install.after_install"
 # ---------------
 # Override standard doctype classes
 
-# override_doctype_class = {
-# 	"ToDo": "custom_app.overrides.CustomToDo"
-# }
+override_doctype_class = {
+	"Email Queue": "eu_einvoice.overrides.email_queue.EInvoiceEmailQueue",
+}
 
 # Document Events
 # ---------------
