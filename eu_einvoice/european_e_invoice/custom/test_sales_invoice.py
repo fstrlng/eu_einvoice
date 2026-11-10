@@ -20,7 +20,7 @@ from eu_einvoice.european_e_invoice.custom.sales_invoice import (
 	validate_doc,
 	vat_exemption_reason_codes,
 )
-from eu_einvoice.overrides.email_queue import get_print_attachment
+from eu_einvoice.overrides.email_queue import EInvoiceSendMailContext, get_print_attachment
 from eu_einvoice.schematron import get_validation_errors
 from eu_einvoice.utils import EInvoiceProfile, get_drafthorse_schema, get_guideline
 
@@ -30,6 +30,28 @@ VAT_RULES = r"BR-(O|E|AE|G|IC|Z|S)-\d+|BR-4[5-9]|BR-DE-14|BR-CO-17"
 
 
 class TestEInvoiceEmailQueue(FrappeTestCase):
+	def test_mail_context_uses_einvoice_print_attachment(self):
+		context = object.__new__(EInvoiceSendMailContext)
+		context.queue_doc = frappe._dict(
+			attachments_list=[
+				{
+					"print_format_attachment": 1,
+					"doctype": "Sales Invoice",
+					"name": "SINV-00001",
+				}
+			]
+		)
+		context._store_file = MagicMock()
+		pdf_attachment = {"fname": "SINV-00001.pdf", "fcontent": b"zugferd-pdf"}
+
+		with patch(
+			"eu_einvoice.overrides.email_queue.get_print_attachment", return_value=pdf_attachment
+		) as get_attachment:
+			self.assertEqual(context.attachments, [pdf_attachment])
+
+		get_attachment.assert_called_once_with({"doctype": "Sales Invoice", "name": "SINV-00001"})
+		context._store_file.assert_called_once_with("SINV-00001.pdf", b"zugferd-pdf")
+
 	def test_embeds_xml_in_sales_invoice_pdf_attachment(self):
 		attachment = {"doctype": "Sales Invoice", "name": "SINV-00001"}
 		pdf_attachment = {"fname": "SINV-00001.pdf", "fcontent": b"pdf"}

@@ -1,7 +1,8 @@
 from functools import cached_property
 
 import frappe
-from frappe.email.doctype.email_queue.email_queue import EmailQueue
+from frappe.email.doctype.email_queue.email_queue import EmailQueue, SendMailContext
+from frappe.utils import get_hook_method
 
 from eu_einvoice.european_e_invoice.custom.sales_invoice import attach_xml_to_pdf
 
@@ -21,7 +22,7 @@ def get_print_attachment(attachment: dict) -> dict:
 	return print_attachment
 
 
-class EInvoiceEmailQueue(EmailQueue):
+class EInvoiceSendMailContext(SendMailContext):
 	"""Embed e-invoice XML when the mail queue creates a Sales Invoice PDF."""
 
 	@cached_property
@@ -50,3 +51,36 @@ class EInvoiceEmailQueue(EmailQueue):
 				attachments.append(print_attachment)
 
 		return attachments
+
+
+class EInvoiceEmailQueue(EmailQueue):
+	"""Use the e-invoice-aware mail context when sending queued emails."""
+
+	def send(self, smtp_server_instance=None, force_send: bool = False):
+		if not self.can_send_now() and not force_send:
+			return
+
+		with EInvoiceSendMailContext(self, smtp_server_instance) as context:
+			context.fetch_smtp_server()
+			message = None
+			for recipient in self.recipients:
+				if recipient.is_mail_sent():
+					continue
+				message = context.build_message(recipient.recipient)
+				if method := get_hook_method("override_email_send"):
+					method(self, self.sender, recipient.recipient, message)
+				elif not frappe.flags.in_test or frappe.flags.testing_email:
+					context.smtp_server.session.sendmail(
+						from_addr=self.sender,
+						to_addrs=recipient.recipient,
+						msg=message.decode("utf-8").encode(),
+					)
+
+				context.update_recipient_status_to_sent(recipient)
+
+			if frappe.flags.in_test and not frappe.flags.testing_email:
+				frappe.flags.sent_mail = message
+				return
+
+			if context.email_account_doc.append_emails_to_sent_folder:
+				context.email_account_doc.append_email_to_sent_folder(message)
