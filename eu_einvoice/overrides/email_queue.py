@@ -29,7 +29,7 @@ class EInvoiceSendMailContext(SendMailContext):
 	def attachments(self) -> list[dict]:
 		attachments = []
 
-		for attachment in self.attachments_list:
+		for attachment in self.queue_doc.attachments_list:
 			if attachment.get("fcontent"):
 				continue
 			file_filters = {}
